@@ -28,4 +28,11 @@ module Clibgit2 {
 		export *
 		module * { export * }
 	}
+	
+	explicit module libssh2 {
+		header "libssh2.h"
+		header "libssh2_publickey.h"
+
+		export *
+	}
 }

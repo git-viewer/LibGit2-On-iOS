@@ -12,11 +12,11 @@ export PATH=$PATH:$REPO_ROOT/tools/bin
 
 # maccatalyst-arm64 macosx macosx-arm64
 if [[ $(arch) == 'arm64' ]]; then
-AVAILABLE_PLATFORMS=(iphoneos iphonesimulator maccatalyst-arm64)
+AVAILABLE_PLATFORMS=(iphoneos iphonesimulator maccatalyst macosx)
 else
-AVAILABLE_PLATFORMS=(iphoneos iphonesimulator maccatalyst)
+AVAILABLE_PLATFORMS=(iphoneos iphonesimulator maccatalyst macosx)
 fi
-
+LIBGIT2_VERSION=1.4.3
 # Download build tools
 test -d tools || wget -q https://github.com/light-tech/LLVM-On-iOS/releases/download/llvm12.0.0/tools.tar.xz
 tar xzf tools.tar.xz
@@ -60,16 +60,17 @@ function setup_variables() {
 		"maccatalyst")
 			ARCH=x86_64
 			SYSROOT=`xcodebuild -version -sdk macosx Path`
-			CMAKE_ARGS+=(-DCMAKE_C_FLAGS=-target\ $ARCH-apple-ios14.1-macabi);;
+			CMAKE_ARGS+=(-DCMAKE_OSX_ARCHITECTURES=$ARCH -DCMAKE_C_FLAGS=-target\ $ARCH-apple-ios14.1-macabi);;
 
 		"maccatalyst-arm64")
 			ARCH=arm64
 			SYSROOT=`xcodebuild -version -sdk macosx Path`
-			CMAKE_ARGS+=(-DCMAKE_C_FLAGS=-target\ $ARCH-apple-ios14.1-macabi);;
+			CMAKE_ARGS+=(-DCMAKE_OSX_ARCHITECTURES=$ARCH -DCMAKE_C_FLAGS=-target\ $ARCH-apple-ios14.1-macabi);;
 
 		"macosx")
 			ARCH=x86_64
-			SYSROOT=`xcodebuild -version -sdk macosx Path`;;
+			SYSROOT=`xcodebuild -version -sdk macosx Path`
+			CMAKE_ARGS+=(-DCMAKE_OSX_ARCHITECTURES=$ARCH);;
 
 		"macosx-arm64")
 			ARCH=arm64
@@ -158,9 +159,9 @@ function build_libssh2() {
 		-DBUILD_EXAMPLES=OFF \
 		-DBUILD_TESTING=OFF)
 
-	cmake "${CMAKE_ARGS[@]}" .. >/dev/null 2>/dev/null
+	cmake "${CMAKE_ARGS[@]}" .. # >/dev/null 2>/dev/null
 
-	cmake --build . --target install >/dev/null 2>/dev/null
+	cmake --build . --target install # >/dev/null 2>/dev/null
 }
 
 ### Build libgit2 for a single platform (given as the first and only argument)
@@ -169,10 +170,12 @@ function build_libssh2() {
 function build_libgit2() {
     setup_variables $1
 
-    rm -rf libgit2-1.3.0
-    test -f v1.3.0.zip || wget -q https://github.com/libgit2/libgit2/archive/refs/tags/v1.3.0.zip
-    ditto -V -x -k --sequesterRsrc --rsrc v1.3.0.zip ./
-    cd libgit2-1.3.0
+    rm -rf libgit2-$LIBGIT2_VERSION
+    # test -f v$LIBGIT2_VERSION.zip || wget -q https://github.com/libgit2/libgit2/archive/refs/tags/v$LIBGIT2_VERSION.zip
+    # ditto -V -x -k --sequesterRsrc --rsrc v$LIBGIT2_VERSION.zip ./
+		test -f v$LIBGIT2_VERSION.tar.gz || wget -q https://github.com/libgit2/libgit2/archive/refs/tags/v$LIBGIT2_VERSION.tar.gz
+		tar xzf v$LIBGIT2_VERSION.tar.gz
+    cd libgit2-$LIBGIT2_VERSION
 
     rm -rf build && mkdir build && cd build
 
@@ -183,16 +186,21 @@ function build_libgit2() {
     # we only need the headers.
     CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR=$REPO_ROOT/install/$PLATFORM \
         -DUSE_SSH=ON \
-        -DLIBSSH2_FOUND=YES \
-        -DLIBSSH2_INCLUDE_DIRS=$REPO_ROOT/install/$PLATFORM/include)
+        # -DLIBSSH2_FOUND=YES \
+        -DLIBSSH2_INCLUDE_DIRS=$REPO_ROOT/install/$PLATFORM/include \
+				-DGIT_RAND_GETENTROPY=0 \
+				-DGIT_SSH_MEMORY_CREDENTIALS=1 \
+				-DGIT_REGEX_REGCOMP=1 \
+				-DBUILD_TESTS=OFF)
 
-    cmake "${CMAKE_ARGS[@]}" .. >/dev/null 2>/dev/null
+    cmake "${CMAKE_ARGS[@]}" .. # >/dev/null 2>/dev/null
 
-    cmake --build . --target install >/dev/null 2>/dev/null
+    cmake --build . --target install # >/dev/null 2>/dev/null
 }
 
 ### Create xcframework for a given library
 function build_xcframework() {
+	rm -rf $FWNAME.xcframework
 	local FWNAME=$1
 	shift
 	local PLATFORMS=( "$@" )
@@ -218,6 +226,16 @@ function copy_modulemap() {
     done
 }
 
+# function copy_opensslHeader() {
+#     local FWDIRS=$(find Clibgit2.xcframework -mindepth 1 -maxdepth 1 -type d)
+#     for d in ${FWDIRS[@]}; do
+#         echo $d
+#         cp OpenSSL.h $d/Headers/OpenSSL.h
+#     done
+# }
+
+rm -rf install
+
 ### Build libgit2 and Clibgit2 frameworks for all available platforms
 
 for p in ${AVAILABLE_PLATFORMS[@]}; do
@@ -232,11 +250,16 @@ for p in ${AVAILABLE_PLATFORMS[@]}; do
 	libtool -static -o libgit2.a lib/*.a
 done
 
+# lipo -create install/maccatalyst/libgit2.a install/maccatalyst-arm64/libgit2.a -output install/maccatalyst/libgit2.a
+# lipo -create install/macosx/libgit2.a install/macosx-arm64/libgit2.a -output install/macosx/libgit2.a
 # Build raw libgit2 XCFramework for Objective-C usage
 build_xcframework libgit2 ${AVAILABLE_PLATFORMS[@]}
-zip -r libgit2.xcframework.zip libgit2.xcframework/
+# rm -rf libgit2.xcframework.zip
+# zip -r libgit2.xcframework.zip libgit2.xcframework/
 
 # Build Clibgit2 XCFramework for use with SwiftGit2
+rm -rf Clibgit2.xcframework
 mv libgit2.xcframework Clibgit2.xcframework
 copy_modulemap
+
 zip -r Clibgit2.xcframework.zip Clibgit2.xcframework/
